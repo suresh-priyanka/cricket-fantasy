@@ -199,40 +199,40 @@ except Exception as e:
 # ==========================================
 # 7. FEATURE: WHO OWNS WHO? (Ownership Report)
 # ==========================================
-print("🕵️  Generating 'player_ownership.csv'...")
+print("🕵️  Generating ownership reports...")
 
 try:
     ownership_list = []
-    # Loop through every manager's team
     for mgr in fantasy_teams_df.columns:
         for player in fantasy_teams_df[mgr]:
             player_clean = str(player).strip()
-            
-            # Skip empty rows or 'nan'
             if player_clean and player_clean != 'nan':
-                # Find points for this player
                 pts = 0
                 match = mvp_df[mvp_df['Player'] == player_clean]
                 if not match.empty:
                     pts = float(match.iloc[0]['Pts'])
                 
                 ownership_list.append({
-                    'Player': player_clean.title(), # Capitalize name
+                    'Player': player_clean.title(),
                     'Manager': mgr, 
                     'Points': pts
                 })
 
-    # Create DataFrame and Save
     ownership_df = pd.DataFrame(ownership_list)
-    # Sort by Points (descending) so best players are at top
     ownership_df = ownership_df.sort_values(by='Points', ascending=False)
     
-    output_path = f'./{group}/player_ownership.csv'
-    ownership_df.to_csv(output_path, index=False)
-    print(f"✅ Success! Created '{output_path}'.")
-    print("   -> Open this file to search for any player!")
+    # 1. Save the CSV (for data usage)
+    ownership_df.to_csv(f'./{group}/player_ownership.csv', index=False)
+    
+    # 2. Save the MARKDOWN (for the Website/GitHub view)
+    ownership_md = f"### 🕵️ Player Ownership Report ({day})\n\n"
+    ownership_md += ownership_df.to_markdown(index=False)
+    
+    ownership_report_file = f'./{group}/{tournament}_ownership.txt'
+    with open(ownership_report_file, 'w') as f:
+        f.write(ownership_md)
+        
+    print(f"✅ Success! Web-ready report created at '{ownership_report_file}'.")
 
 except Exception as e:
     print(f"❌ Ownership Report Error: {e}")
-
-print("\n✨ Script Complete.")
