@@ -4,58 +4,50 @@
 import pandas as pd
 import sys
 import os
-from datetime import date
+from datetime import date, datetime
 from thefuzz import process
 import matplotlib.pyplot as plt
 
 # ==========================================
-# 1. CONFIGURATION & SETUP
+# 1. CONFIGURATION & DATE LOGIC
 # ==========================================
-pd.set_option('display.max_colwidth', 200)
-
 if len(sys.argv) > 1:
     group = sys.argv[1]
 else:
     group = 'group_1' 
 
-# Date Logic
 ipl_day_0 = date(2026, 2, 6)
 ipl_day_cur = date.today()
 day_num = abs((ipl_day_cur - ipl_day_0).days)
-day = 'day_' + str(day_num)
-prev_day = 'day_' + str(day_num - 1)
+day = f'day_{day_num}'
+prev_day = f'day_{day_num - 1}'
 
 # --- SMART FALLBACK ---
 if not os.path.exists(f'./data/mvp_{day}.csv'):
     day = prev_day 
-    prev_day_num = int(day.split('_')[1]) - 1
-    prev_day = f'day_{prev_day_num}'
     if not os.path.exists(f'./data/mvp_{day}.csv'):
          day = 'day_1'
-         prev_day = 'day_0'
 
-tournament = 't20_wc_2026'
-leaderboard_graph_file = f'./{group}/{tournament}_leaderboard.png'
-leaderboard_file = f'./{group}/{tournament}_leaderboard.txt'
+# Path for the "Site" content
+leaderboard_file = "README.md" 
 ipl_mock_auction_summary = f'./{group}/AuctionSummary.csv'
 
 # ==========================================
-# 2. LOAD & CALCULATE
+# 2. DATA PROCESSING
 # ==========================================
 mvp_df = pd.read_csv(f'./data/mvp_{day}.csv')
 mvp_df['Player'] = mvp_df['Player'].astype(str).str.lower().str.strip()
 
-fantasy_teams_auction_df = pd.read_csv(ipl_mock_auction_summary)
-fantasy_mgrs = fantasy_teams_auction_df.columns.to_list()
-fantasy_teams_df = fantasy_teams_auction_df.apply(lambda x: x.astype(str).str.lower().str.strip())
+fantasy_teams_df = pd.read_csv(ipl_mock_auction_summary).apply(lambda x: x.astype(str).str.lower().str.strip())
+fantasy_mgrs = fantasy_teams_df.columns.to_list()
 
 scores = { mgr:0 for mgr in fantasy_mgrs }
 ownership_list = []
 
 for mgr in fantasy_mgrs:
     mvp_players_list = mvp_df['Player'].to_list()
-    for i in range(len(fantasy_teams_df[mgr])):
-        player_name = str(fantasy_teams_df[mgr].iloc[i])
+    for player in fantasy_teams_df[mgr]:
+        player_name = str(player)
         pts = 0.0
         if player_name in mvp_players_list:
             pts = float(mvp_df.loc[mvp_df['Player'] == player_name, 'Pts'].iloc[0])
@@ -64,20 +56,42 @@ for mgr in fantasy_mgrs:
             ownership_list.append({'Player': player_name.title(), 'Manager': mgr, 'Points': pts})
 
 # ==========================================
-# 3. GENERATE THE CONSOLIDATED WEB REPORT
+# 3. GENERATE THE WEB DASHBOARD (README.md)
 # ==========================================
-print(f"🚀 Generating Master Report for {day}...")
+print(f"🚀 Updating Suddu Repo Site for {day}...")
 
-# Sort Data
-scores_sorted = pd.DataFrame(sorted(scores.items(), key=lambda x: x[1], reverse=True), columns=['Manager', 'Total Points'])
-ownership_sorted = pd.DataFrame(ownership_list).sort_values(by='Points', ascending=False)
+scores_df = pd.DataFrame(sorted(scores.items(), key=lambda x: x[1], reverse=True), columns=['Manager', 'Total Points'])
+ownership_df = pd.DataFrame(ownership_list).sort_values(by='Points', ascending=False)
 
-# Build the Markdown String
-report_content = f"# 🏏 T20 World Cup 2026 Fantasy Dashboard\n"
-report_content += f"**Report Generated on:** {day.replace('_', ' ').upper()}\n\n"
+# Build the Web Content
+now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+report = f"# 🏏 T20 World Cup 2026 Fantasy League\n"
+report += f"📅 **Tournament Day:** {day.replace('_', ' ').upper()} | 🕒 **Last Update:** {now}\n\n"
 
-report_content += "## 🏆 Manager Leaderboard\n"
-report_content += "The current standings of all managers based on their player performance.\n\n"
-report_content += scores_sorted.to_markdown(index=False) + "\n\n"
+report += "### 🏆 Current Standings\n"
+report += scores_df.to_markdown(index=False) + "\n\n"
 
-report_content += "---\n\n"
+report += "---\n\n"
+
+report += "### 🕵️ Player Ownership & Points\n"
+report += "Use `Ctrl + F` to find your players!\n\n"
+report += ownership_df.to_markdown(index=False) + "\n\n"
+
+report += "---\n"
+report += "⚡ *Data automatically synced from suddu-backend services.*"
+
+with open(leaderboard_file, 'w') as f:
+    f.write(report)
+
+# ==========================================
+# 4. PLAYER CHART
+# ==========================================
+top_10 = mvp_df.sort_values(by='Pts', ascending=False).head(10)
+plt.figure(figsize=(10, 6)) 
+plt.bar(top_10['Player'].str.title(), top_10['Pts'], color='#1f77b4')
+plt.title(f'Top 10 Players - {day.upper()}')
+plt.xticks(rotation=45, ha='right') 
+plt.tight_layout()
+plt.savefig('leaderboard.png')
+
+print(f"✅ Site Updated! Just push to see it live.")
