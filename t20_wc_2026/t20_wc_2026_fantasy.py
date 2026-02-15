@@ -1,185 +1,126 @@
-#!/usr/bin/env python
-# coding: utf-8
-
 import pandas as pd
 import sys
 import os
-from datetime import date, datetime
-from thefuzz import process
 import matplotlib.pyplot as plt
+from datetime import date
 
 # ==========================================
-# 1. CONFIGURATION & DATE LOGIC
+# 1. SETUP & PATHS
 # ==========================================
-if len(sys.argv) > 1:
-    group = sys.argv[1]
-else:
-    group = 'group_1' 
-
+group = sys.argv[1] if len(sys.argv) > 1 else 'group_1'
+# Logic to detect current day based on tournament start (Feb 6, 2026)
 ipl_day_0 = date(2026, 2, 6)
 ipl_day_cur = date.today()
 day_num = abs((ipl_day_cur - ipl_day_0).days)
 day = f'day_{day_num}'
-prev_day = f'day_{day_num - 1}'
 
-# --- SMART FALLBACK ---
+# Fallback to the latest available file if today's isn't ready
 if not os.path.exists(f'./data/mvp_{day}.csv'):
-    day = prev_day 
-    if not os.path.exists(f'./data/mvp_{day}.csv'):
-         day = 'day_1'
+    files = sorted([f for f in os.listdir('./data/') if f.startswith('mvp_day_')], reverse=True)
+    day = files[0].replace('mvp_', '').replace('.csv', '') if files else 'day_1'
 
-# Path for the "Site" content
-leaderboard_file = "README.md" 
-ipl_mock_auction_summary = f'./{group}/AuctionSummary.csv'
+print(f"🚀 Processing data for {day.upper()}...")
 
 # ==========================================
-# 2. DATA PROCESSING
+# 2. LOAD DATA
 # ==========================================
 mvp_df = pd.read_csv(f'./data/mvp_{day}.csv')
 mvp_df['Player'] = mvp_df['Player'].astype(str).str.lower().str.strip()
 
-fantasy_teams_df = pd.read_csv(ipl_mock_auction_summary).apply(lambda x: x.astype(str).str.lower().str.strip())
-fantasy_mgrs = fantasy_teams_df.columns.to_list()
+auction_file = f'./{group}/AuctionSummary.csv'
+fantasy_teams_df = pd.read_csv(auction_file)
+# Clean columns and data
+fantasy_teams_df.columns = fantasy_teams_df.columns.str.strip()
+fantasy_mgrs = fantasy_teams_df.columns.tolist()
 
-scores = { mgr:0 for mgr in fantasy_mgrs }
-ownership_list = []
+# ==========================================
+# 3. MAPPING OWNERS & CALCULATING SCORES
+# ==========================================
+player_to_owner = {}
+scores = {mgr: 0.0 for mgr in fantasy_mgrs}
 
 for mgr in fantasy_mgrs:
-    mvp_players_list = mvp_df['Player'].to_list()
-    for player in fantasy_teams_df[mgr]:
-        player_name = str(player)
-        pts = 0.0
-        if player_name in mvp_players_list:
-            pts = float(mvp_df.loc[mvp_df['Player'] == player_name, 'Pts'].iloc[0])
-            scores[mgr] += pts
-        if player_name != 'nan':
-            ownership_list.append({'Player': player_name.title(), 'Manager': mgr, 'Points': pts})
-
-# ==========================================
-# 3. GENERATE THE WEB DASHBOARD (README.md)
-# ==========================================
-print(f"🚀 Updating Suddu Repo Site for {day}...")
-
-scores_df = pd.DataFrame(sorted(scores.items(), key=lambda x: x[1], reverse=True), columns=['Manager', 'Total Points'])
-ownership_df = pd.DataFrame(ownership_list).sort_values(by='Points', ascending=False)
-
-# Build the Web Content
-now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-report = f"# 🏏 T20 World Cup 2026 Fantasy League\n"
-report += f"📅 **Tournament Day:** {day.replace('_', ' ').upper()} | 🕒 **Last Update:** {now}\n\n"
-
-report += "### 🏆 Current Standings\n"
-report += scores_df.to_markdown(index=False) + "\n\n"
-
-report += "---\n\n"
-
-report += "### 🕵️ Player Ownership & Points\n"
-report += "Use `Ctrl + F` to find your players!\n\n"
-report += ownership_df.to_markdown(index=False) + "\n\n"
-
-report += "---\n"
-report += "⚡ *Data automatically synced from suddu-backend services.*"
-
-with open(leaderboard_file, 'w') as f:
-    f.write(report)
-
-# ==========================================
-# 4. PLAYER CHART
-# ==========================================
-top_10 = mvp_df.sort_values(by='Pts', ascending=False).head(10)
-plt.figure(figsize=(10, 6)) 
-plt.bar(top_10['Player'].str.title(), top_10['Pts'], color='#1f77b4')
-plt.title(f'Top 10 Players - {day.upper()}')
-plt.xticks(rotation=45, ha='right') 
-plt.tight_layout()
-plt.savefig('leaderboard.png')
-
-print(f"✅ Site Updated! Just push to see it live.")
-
-# ==========================================
-# 7. WEB INTEGRATION: WHO OWNS WHO
-# ==========================================
-print("🌐 Syncing Ownership Data to Website...")
-
-try:
-    ownership_list = []
-    for mgr in fantasy_teams_df.columns:
-        for player in fantasy_teams_df[mgr]:
-            player_clean = str(player).strip()
-            if player_clean and player_clean != 'nan':
-                pts = 0
-                match = mvp_df[mvp_df['Player'] == player_clean]
-                if not match.empty:
-                    pts = float(match.iloc[0]['Pts'])
-                
-                ownership_list.append({
-                    'Player': player_clean.title(),
-                    'Manager': mgr, 
-                    'Points': pts
-                })
-
-    ownership_df = pd.DataFrame(ownership_list)
-    # Sort by points so the website shows the best players first
-    ownership_df = ownership_df.sort_values(by='Points', ascending=False)
+    # Get clean list of players for this manager
+    mgr_players = fantasy_teams_df[mgr].dropna().astype(str).str.lower().str.strip().tolist()
     
-    # SAVE THIS SPECIFIC FILENAME - the website template looks for this
-    site_file_path = f'./{group}/player_ownership_web.csv'
-    ownership_df.to_csv(site_file_path, index=False)
-    
-    print(f"✅ Web data synced to {site_file_path}")
+    # Map each player to this manager
+    for p in mgr_players:
+        player_to_owner[p] = mgr.upper()
+        
+    # Calculate score for this manager (Vectorized for speed)
+    mgr_pts = mvp_df[mvp_df['Player'].isin(mgr_players)]['Pts'].sum()
+    scores[mgr] = round(mgr_pts, 2)
 
-except Exception as e:
-    print(f"❌ Web Sync Error: {e}")
+# Add Owner field to MVP leaderboard
+mvp_df['Owner'] = mvp_df['Player'].map(player_to_owner).fillna('UNDRAFTED')
+mvp_df['Player'] = mvp_df['Player'].str.title()
 
 # ==========================================
-# 8. SQUAD & OWNERSHIP VIEW FOR THE WEBSITE
+# 4. GENERATE WEB ASSETS (CSV & HTML)
 # ==========================================
-print("🌐 Formatting squads for web view...")
-with open(f"./{group}/squads_live.md", "w") as f:
-    f.write("# 🏏 Official Player Ownership & Squads\n\n")
+# Create the Standings DataFrame
+scores_df = pd.DataFrame(list(scores.items()), columns=['Manager', 'Total Points']).sort_values(by='Total Points', ascending=False)
+
+# Save the updated MVP file with Owners (the website reads this)
+mvp_df.to_csv(f'./data/mvp_{day}.csv', index=False)
+
+# Save the Squads/Ownership file
+ownership_rows = []
+for p, m in player_to_owner.items():
+    pts = mvp_df[mvp_df['Player'].str.lower() == p]['Pts'].sum()
+    ownership_rows.append({"Player": p.title(), "Manager": m, "Points": pts})
+
+ownership_df = pd.DataFrame(ownership_rows).sort_values(by="Points", ascending=False)
+ownership_df.to_csv(f'./{group}/squads_live.csv', index=False)
+ownership_df.to_html(f'./{group}/ownership.html', classes='table table-striped', index=False)
+
+# ==========================================
+# 5. FANCY VISUALS (SPEED OPTIMIZED)
+# ==========================================
+print("🎨 Generating beauty visuals...")
+plt.style.use('dark_background') # Aesthetic dark mode for web
+
+# --- PIE CHART (Points Share) ---
+plt.figure(figsize=(8, 8))
+plt.pie(scores_df['Total Points'], labels=scores_df['Manager'], autopct='%1.1f%%', colors=plt.cm.viridis(range(len(scores_df))))
+plt.title('League Points Distribution')
+plt.savefig(f'./{group}/manager_distribution.png')
+plt.close()
+
+# --- TREND GRAPH (The Speed Fix) ---
+plt.figure(figsize=(10, 5))
+history_data = {mgr: [0] for mgr in fantasy_mgrs}
+days_available = sorted([f for f in os.listdir('./data/') if f.startswith('mvp_day_')], key=lambda x: int(x.split('_')[2].split('.')[0]))
+
+for d_file in days_available:
+    temp_df = pd.read_csv(f'./data/{d_file}')
+    temp_df['Player'] = temp_df['Player'].astype(str).str.lower().str.strip()
     for mgr in fantasy_mgrs:
-        f.write(f"### 🛡️ {mgr.upper()}'S SQUAD\n")
-        # Filter ownership list for this manager
-        mgr_players = [p for p in ownership_list if p['Manager'] == mgr]
-        mgr_df = pd.DataFrame(mgr_players)[['Player', 'Points']]
-        f.write(mgr_df.to_markdown(index=False) + "\n\n")
+        mgr_players = fantasy_teams_df[mgr].dropna().astype(str).str.lower().str.strip().tolist()
+        pts = temp_df[temp_df['Player'].isin(mgr_players)]['Pts'].sum()
+        history_data[mgr].append(pts)
+
+for mgr, trend in history_data.items():
+    plt.plot(trend, marker='o', label=mgr, linewidth=2)
+
+plt.title('The Race to the Top')
+plt.xlabel('Days')
+plt.ylabel('Points')
+plt.legend(loc='upper left', bbox_to_anchor=(1, 1))
+plt.tight_layout()
+plt.savefig(f'./{group}/points_trend.png')
+plt.close()
 
 # ==========================================
-# 9. WEBSITE INTEGRATION (The "Live" Site)
+# 6. UPDATE README (GITHUB VIEW)
 # ==========================================
-print("🌐 Formatting data for the web interface...")
+with open("README.md", "w") as f:
+    f.write(f"# 🏏 T20 WC 2026 Fantasy - {group.upper()}\n\n")
+    f.write("## 🏆 Standings\n")
+    f.write(scores_df.to_markdown(index=False) + "\n\n")
+    f.write("## 🕵️ Who Owns Whom (Top 10 Scorers)\n")
+    f.write(mvp_df.head(10)[['Player', 'Pts', 'Owner']].to_markdown(index=False) + "\n\n")
+    f.write("## 📈 Performance Visuals\n")
+    f.write(f"![Trend](./{group}/points_trend.png)\n")
 
-try:
-    web_rows = []
-    # Using the correct variable name: fantasy_teams_df
-    for mgr in fantasy_teams_df.columns:
-        for player in fantasy_teams_df[mgr]:
-            p_name = str(player).strip().lower()
-            if p_name != 'nan' and p_name != '':
-                pts = 0.0
-                # Match points from your mvp_df
-                if p_name in mvp_df['Player'].values:
-                    pts = float(mvp_df.loc[mvp_df['Player'] == p_name, 'Pts'].iloc[0])
-                
-                web_rows.append({
-                    "Manager": mgr.upper(),
-                    "Player": p_name.title(),
-                    "Points": pts
-                })
-
-    # Create the DataFrame
-    web_output_df = pd.DataFrame(web_rows).sort_values(by="Points", ascending=False)
-
-    # 1. Save as CSV (for the site's data folder)
-    web_output_df.to_csv(f'./{group}/squads_live.csv', index=False)
-
-    # 2. Save as HTML (This is what actually shows up on a website!)
-    # We will save this as 'ownership.html'
-    html_table = web_output_df.to_html(classes='table table-striped', index=False)
-    with open(f"./{group}/ownership.html", "w") as f:
-        f.write(html_table)
-
-    print(f"✅ Website data ready in ./{group}/squads_live.csv and ownership.html")
-
-except Exception as e:
-    print(f"❌ Web Sync Error: {e}")
+print(f"✅ Full update complete for {day}! Ready to push.")
